@@ -76,6 +76,27 @@ const DEFAULT_CONFIG = {
     }
 };
 
+// ===== API 配置 =====
+// 支持通过 URL 参数或 localStorage 配置 API endpoint
+// 例如: ?api=http://localhost:3000 或 localStorage.setItem('openclaw-api', 'http://localhost:3000')
+function getApiBase() {
+    // 优先级: URL 参数 > localStorage > 默认（当前域名）
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlApi = urlParams.get('api');
+    if (urlApi) {
+        localStorage.setItem('openclaw-api', urlApi);
+        return urlApi;
+    }
+    return localStorage.getItem('openclaw-api') || '';
+}
+const API_BASE = getApiBase();
+
+// API fetch helper - 自动添加 API_BASE 前缀
+function apiFetch(path, options = {}) {
+    const url = API_BASE + path;
+    return fetch(url, options);
+}
+
 // ===== 应用状态 =====
 let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 let editingProvider = null;
@@ -85,6 +106,11 @@ let editingChannel = null;
 // 缓存状态
 let cachedConfig = null; // 上传时的原始配置
 let isModified = false;  // 配置是否已修改
+
+// 复制/粘贴状态（提供商与模型）
+let selectedProviders = new Set();
+let selectedModels = new Map();
+const CLIPBOARD_KEY = 'openclaw-config-clipboard-v1';
 
 // ===== DOM 元素引用 =====
 const elements = {
@@ -143,6 +169,7 @@ const elements = {
     modelMaxTokens: document.getElementById('modelMaxTokens'),
     modelReasoning: document.getElementById('modelReasoning'),
     modelVision: document.getElementById('modelVision'),
+    modelApiMode: document.getElementById('modelApiMode'),
     closeModelModal: document.getElementById('closeModelModal'),
     cancelModelBtn: document.getElementById('cancelModelBtn'),
     saveModelBtn: document.getElementById('saveModelBtn'),
@@ -231,7 +258,7 @@ function getAllModels() {
         const providerModels = provider.models || [];
         for (const model of providerModels) {
             models.push({
-                id: `${providerName}/${model.id}`,
+                id: providerName + '/' + model.id,
                 name: model.name || model.id,
                 provider: providerName
             });
@@ -292,10 +319,13 @@ function renderProviders() {
     let html = '';
     for (const [name, provider] of Object.entries(providers)) {
         const models = provider.models || [];
+        const provChecked = selectedProviders.has(name) ? 'checked' : '';
         html += `
             <div class="provider-card" data-provider="${name}">
                 <div class="provider-header" onclick="toggleProvider('${name}')">
                     <div class="provider-info">
+                        <input type="checkbox" class="provider-checkbox" data-provider="${name}" ${provChecked}
+                            onclick="event.stopPropagation(); toggleSelectProvider('${name}', this.checked)">
                         <div class="provider-icon">${getProviderIcon(name)}</div>
                         <div>
                             <div class="provider-name">${name}</div>
@@ -309,8 +339,13 @@ function renderProviders() {
                 </div>
                 <div class="provider-body" id="provider-body-${name}">
                     <div class="model-list">
-                        ${models.map((model, index) => `
+                        ${models.map((model, index) => {
+                            const mKey = name + '/' + model.id;
+                            const mChecked = selectedModels.has(mKey) ? 'checked' : '';
+                            return `
                             <div class="model-item">
+                                <input type="checkbox" class="model-checkbox" data-key="${mKey}" ${mChecked}
+                                    onclick="toggleSelectModel('${mKey}', '${name}', ${index}, this.checked)">
                                 <div class="model-info">
                                     <div class="model-id">${model.id}</div>
                                     <div class="model-meta">
@@ -323,8 +358,8 @@ function renderProviders() {
                                     <button class="btn btn-icon" onclick="openModelModal('${name}', ${index})">✏️</button>
                                     <button class="btn btn-icon" onclick="deleteModel('${name}', ${index})">🗑️</button>
                                 </div>
-                            </div>
-                        `).join('')}
+                            </div>`;
+                        }).join('')}
                     </div>
                     <button class="add-model-btn" onclick="openModelModal('${name}')">
                         + 添加模型
@@ -336,6 +371,112 @@ function renderProviders() {
 
     elements.providersList.innerHTML = html;
 }
+
+// ===== 多选 & 复制粘贴 =====
+
+function toggleSelectProvider(name, checked) {
+    if (checked) { selectedProviders.add(name); } else { selectedProviders.delete(name); }
+}
+
+function toggleSelectModel(key, providerName, index, checked) {
+    if (checked) { selectedModels.set(key, { providerName, index }); } else { selectedModels.delete(key); }
+}
+
+function copySelectedProviders() {
+    const clip = { providers: {} };
+    const provs = config.models?.providers || {};
+
+    // 整个提供商被选中 → 拷贝整体
+    for (const name of selectedProviders) {
+        if (provs[name]) clip.providers[name] = JSON.parse(JSON.stringify(provs[name]));
+    }
+
+    // 单独被勾选的模型 → 也加入对应提供商
+    for (const [key, { providerName, index }] of selectedModels) {
+        if (selectedProviders.has(providerName)) continue; // 整体已包含
+        if (!provs[providerName]) continue;
+        const model = provs[providerName].models?.[index];
+        if (!model) continue;
+        if (!clip.providers[providerName]) {
+            // 只复制提供商头信息 + 选中的模型
+            const { models, ...meta } = JSON.parse(JSON.stringify(provs[providerName]));
+            clip.providers[providerName] = { ...meta, models: [] };
+        }
+        clip.providers[providerName].models.push(JSON.parse(JSON.stringify(model)));
+    }
+
+    if (Object.keys(clip.providers).length === 0) {
+        showToast('请先勾选要复制的提供商或模型', 'warning');
+        return;
+    }
+
+    localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(clip));
+    const pCount = Object.keys(clip.providers).length;
+    const mCount = Object.values(clip.providers).reduce((s, p) => s + (p.models?.length || 0), 0);
+    showToast(`已复制 ${pCount} 个提供商，${mCount} 个模型 📋`);
+}
+
+function copyAllProviders() {
+    const provs = config.models?.providers || {};
+    if (Object.keys(provs).length === 0) {
+        showToast('暂无提供商可复制', 'warning');
+        return;
+    }
+    const clip = { providers: JSON.parse(JSON.stringify(provs)) };
+    localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(clip));
+    const mCount = Object.values(provs).reduce((s, p) => s + (p.models?.length || 0), 0);
+    showToast(`已复制全部 ${Object.keys(provs).length} 个提供商，${mCount} 个模型 📚`);
+}
+
+function pasteProviders() {
+    const raw = localStorage.getItem(CLIPBOARD_KEY);
+    if (!raw) { showToast('剪贴板为空', 'warning'); return; }
+
+    let clip;
+    try { clip = JSON.parse(raw); } catch { showToast('剪贴板数据无效', 'error'); return; }
+    if (!clip.providers || Object.keys(clip.providers).length === 0) { showToast('剪贴板无提供商数据', 'warning'); return; }
+
+    if (!config.models) config.models = { providers: {} };
+    if (!config.models.providers) config.models.providers = {};
+
+    let addedP = 0, addedM = 0, mergedM = 0;
+    for (const [name, provider] of Object.entries(clip.providers)) {
+        if (!config.models.providers[name]) {
+            // 新提供商：直接添加
+            config.models.providers[name] = JSON.parse(JSON.stringify(provider));
+            addedP++;
+            addedM += provider.models?.length || 0;
+        } else {
+            // 同名提供商：合并模型（同 ID 覆盖）
+            const existing = config.models.providers[name];
+            if (!existing.models) existing.models = [];
+            for (const model of (provider.models || [])) {
+                const idx = existing.models.findIndex(m => m.id === model.id);
+                if (idx >= 0) { existing.models[idx] = JSON.parse(JSON.stringify(model)); mergedM++; }
+                else { existing.models.push(JSON.parse(JSON.stringify(model))); addedM++; }
+            }
+            // 更新 baseUrl / apiKey / api（如果剪贴板中有值）
+            if (provider.baseUrl) existing.baseUrl = provider.baseUrl;
+            if (provider.apiKey) existing.apiKey = provider.apiKey;
+            if (provider.api) existing.api = provider.api;
+        }
+    }
+
+    renderProviders();
+    updateModelSelectors();
+    onConfigChanged();
+    showToast(`粘贴完成：新增 ${addedP} 个提供商、${addedM} 个模型，覆盖 ${mergedM} 个同名模型 ✓`);
+}
+
+function clearSelection() {
+    selectedProviders.clear();
+    selectedModels.clear();
+    renderProviders();
+    showToast('已清空选择');
+}
+
+window.toggleSelectProvider = toggleSelectProvider;
+window.toggleSelectModel = toggleSelectModel;
 
 function toggleProvider(name) {
     const body = document.getElementById(`provider-body-${name}`);
@@ -355,7 +496,7 @@ function openProviderModal(name = null) {
         elements.providerName.disabled = false; // 允许修改名称
         elements.providerBaseUrl.value = provider.baseUrl || '';
         elements.providerApiKey.value = provider.apiKey || '';
-        elements.providerApiMode.value = provider.api || 'openai-completions';
+        elements.providerApiMode.value = provider.api || provider.models?.[0]?.api || 'openai-completions';
     } else {
         // 添加模式
         elements.providerModalTitle.textContent = '添加提供商';
@@ -499,6 +640,9 @@ function openModelModal(providerName, modelIndex = null) {
         elements.modelMaxTokens.value = model.maxTokens || 32000;
         elements.modelReasoning.checked = model.reasoning !== false;
         elements.modelVision.checked = model.input?.includes('image') !== false;
+        if (elements.modelApiMode) {
+            elements.modelApiMode.value = model.api || config.models.providers[providerName].api || 'openai-completions';
+        }
     } else {
         // 添加模式
         elements.modelModalTitle.textContent = '添加模型';
@@ -508,6 +652,9 @@ function openModelModal(providerName, modelIndex = null) {
         elements.modelMaxTokens.value = 32000;
         elements.modelReasoning.checked = true;
         elements.modelVision.checked = true;
+        if (elements.modelApiMode) {
+            elements.modelApiMode.value = config.models.providers[providerName]?.api || 'openai-completions';
+        }
     }
 
     elements.modelModal.classList.remove('hidden');
@@ -532,9 +679,11 @@ function saveModel() {
         return;
     }
 
+    const modelApiMode = elements.modelApiMode ? elements.modelApiMode.value : null;
     const model = {
         id: modelId,
         name: modelName || modelId,
+        ...(modelApiMode ? { api: modelApiMode } : {}),
         reasoning: reasoning,
         input: vision ? ['text', 'image'] : ['text'],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -971,9 +1120,15 @@ function initEventListeners() {
     // Close modals on overlay click
     [elements.providerModal, elements.modelModal, elements.channelModal].forEach(modal => {
         modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                modal.classList.add('hidden');
-            }
+            if (e.target === modal) modal.classList.add('hidden');
+        });
+    });
+
+    // Close new modals on overlay click
+    ['nodeModal', 'rescueModal', 'installModal'].forEach(id => {
+        const modal = document.getElementById(id);
+        if (modal) modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.classList.add('hidden');
         });
     });
 
@@ -983,6 +1138,10 @@ function initEventListeners() {
             elements.providerModal.classList.add('hidden');
             elements.modelModal.classList.add('hidden');
             elements.channelModal.classList.add('hidden');
+            ['nodeModal', 'rescueModal', 'installModal'].forEach(id => {
+                const m = document.getElementById(id);
+                if (m) m.classList.add('hidden');
+            });
         }
     });
 }
@@ -1000,8 +1159,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast('欢迎使用 OpenClaw 配置管理器 🦞', 'success');
 });
 
-// 自动加载示例配置
+// 自动加载本地配置文件（优先）或示例配置
 async function loadExampleConfig() {
+    try {
+        // 优先尝试从服务器加载本地配置
+        const localResponse = await apiFetch('/api/config');
+        if (localResponse.ok) {
+            const data = await localResponse.json();
+            if (data.exists && data.config) {
+                config = data.config;
+                cachedConfig = JSON.parse(JSON.stringify(config));
+                isModified = false;
+                console.log('Loaded local config from:', data.path);
+                showToast('已加载本地配置文件 ✓', 'success');
+                return;
+            }
+        }
+    } catch (e) {
+        console.log('Failed to load local config:', e.message);
+    }
+    
+    // 回退到示例配置
     try {
         const response = await fetch('openclaw-example.json');
         if (response.ok) {
@@ -1009,9 +1187,146 @@ async function loadExampleConfig() {
             config = exampleConfig;
             cachedConfig = JSON.parse(JSON.stringify(config));
             isModified = false;
+            console.log('Loaded example config');
         }
     } catch (e) {
         console.log('No example config found, using default');
+    }
+}
+
+// 保存到当前节点（本地或远程）
+async function saveToLocalServer() {
+    // 先保存所有表单设置
+    saveAllSettings();
+    
+    // 更新 meta
+    config.meta = config.meta || {};
+    config.meta.lastTouchedAt = new Date().toISOString();
+    
+    // 判断当前是本地还是远程节点
+    if (!activeNodeId) {
+        // 保存到本地
+        try {
+            const response = await apiFetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                cachedConfig = JSON.parse(JSON.stringify(config));
+                isModified = false;
+                updateCacheStatus();
+                
+                let msg = '配置已保存到本地 ✓';
+                if (data.backup) {
+                    msg += `\n备份: ${data.backup}`;
+                }
+                showToast(msg, 'success');
+            } else if (data.validation && !data.validation.valid) {
+                const errors = data.validation.errors.join('\n');
+                showToast('配置验证失败:\n' + errors, 'error');
+            } else {
+                showToast('保存失败: ' + (data.message || '未知错误'), 'error');
+            }
+        } catch (e) {
+            showToast('保存失败: ' + e.message, 'error');
+        }
+    } else {
+        // 保存到远程节点
+        const node = nodes.find(n => n.id === activeNodeId);
+        if (!node) {
+            showToast('节点不存在', 'error');
+            return;
+        }
+        
+        try {
+            const data = await nodeFetch(node, '/config', {
+                method: 'POST',
+                body: JSON.stringify({ config })
+            });
+            
+            if (data.ok) {
+                cachedConfig = JSON.parse(JSON.stringify(config));
+                isModified = false;
+                updateCacheStatus();
+                showToast(`配置已保存到 ${node.name} ✓`);
+            } else {
+                showToast('保存失败: ' + (data.error || '未知错误'), 'error');
+            }
+        } catch (e) {
+            showToast('保存失败: ' + e.message, 'error');
+        }
+    }
+}
+
+// 验证当前配置
+async function validateCurrentConfig() {
+    try {
+        const response = await apiFetch('/api/config/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config })
+        });
+        
+        const data = await response.json();
+        
+        if (data.valid) {
+            showToast('配置验证通过 ✓', 'success');
+        } else {
+            const errors = data.errors.join('\n');
+            showToast('配置验证失败:\n' + errors, 'error');
+        }
+        
+        return data;
+    } catch (e) {
+        showToast('验证失败: ' + e.message, 'error');
+        return { valid: false, errors: [e.message] };
+    }
+}
+
+// 加载备份列表
+async function loadBackups() {
+    try {
+        const response = await apiFetch('/api/backups');
+        const data = await response.json();
+        return data.backups || [];
+    } catch (e) {
+        console.error('Failed to load backups:', e);
+        return [];
+    }
+}
+
+// 从备份恢复
+async function restoreFromBackup(backupName) {
+    if (!confirm(`确定要从备份 "${backupName}" 恢复吗？\n当前配置将被备份。`)) {
+        return;
+    }
+    
+    try {
+        const response = await apiFetch('/api/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ backup: backupName })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            config = data.config;
+            cachedConfig = JSON.parse(JSON.stringify(config));
+            isModified = false;
+            renderAll();
+            updateCacheStatus();
+            updateRawJsonDisplay();
+            showToast(`已从备份恢复 ✓\n${data.currentBackup ? '当前配置已备份到: ' + data.currentBackup : ''}`, 'success');
+        } else {
+            showToast('恢复失败: ' + (data.message || '未知错误'), 'error');
+        }
+    } catch (e) {
+        showToast('恢复失败: ' + e.message, 'error');
     }
 }
 
@@ -1111,6 +1426,10 @@ window.updateFallback = updateFallback;
 window.removeFallback = removeFallback;
 window.toggleTheme = toggleTheme;
 window.copyCommand = copyCommand;
+window.saveToLocalServer = saveToLocalServer;
+window.validateCurrentConfig = validateCurrentConfig;
+window.restoreFromBackup = restoreFromBackup;
+window.renderBackupsList = renderBackupsList;
 
 // ===== 实时同步 =====
 
@@ -1351,6 +1670,43 @@ function initCommandsInput() {
     }
 }
 
+// 渲染备份列表
+async function renderBackupsList() {
+    const container = document.getElementById('backupsList');
+    if (!container) return;
+    
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-text">加载中...</div></div>';
+    
+    const backups = await loadBackups();
+    
+    if (backups.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">📦</div>
+                <div class="empty-state-text">暂无备份</div>
+            </div>`;
+        return;
+    }
+    
+    container.innerHTML = backups.map(backup => `
+        <div class="backup-item">
+            <div class="backup-info">
+                <div class="backup-name">${escapeHtml(backup.name)}</div>
+                <div class="backup-meta">
+                    <span>${new Date(backup.modified).toLocaleString()}</span>
+                    <span>·</span>
+                    <span>${(backup.size / 1024).toFixed(1)} KB</span>
+                </div>
+            </div>
+            <div class="backup-actions">
+                <button class="btn btn-secondary btn-sm" onclick="restoreFromBackup('${backup.name}')">
+                    ↩️ 恢复
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
 // ===== 初始化扩展功能 =====
 
 function initExtendedFeatures() {
@@ -1396,11 +1752,32 @@ function initExtendedFeatures() {
 document.addEventListener('DOMContentLoaded', () => {
     initExtendedFeatures();
 
+    // 新增按钮事件
+    const saveToServerBtn = document.getElementById('saveToServerBtn');
+    if (saveToServerBtn) saveToServerBtn.addEventListener('click', saveToLocalServer);
+
+    const validateBtn = document.getElementById('validateBtn');
+    if (validateBtn) validateBtn.addEventListener('click', validateCurrentConfig);
+
+    const refreshBackupsBtn = document.getElementById('refreshBackupsBtn');
+    if (refreshBackupsBtn) refreshBackupsBtn.addEventListener('click', renderBackupsList);
+
+    // 复制粘贴按钮
+    const copySelectedBtn = document.getElementById('copySelectedBtn');
+    if (copySelectedBtn) copySelectedBtn.addEventListener('click', copySelectedProviders);
+    const copyAllBtn = document.getElementById('copyAllBtn');
+    if (copyAllBtn) copyAllBtn.addEventListener('click', copyAllProviders);
+    const pasteOverwriteBtn = document.getElementById('pasteOverwriteBtn');
+    if (pasteOverwriteBtn) pasteOverwriteBtn.addEventListener('click', pasteProviders);
+    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+    if (clearSelectionBtn) clearSelectionBtn.addEventListener('click', clearSelection);
+
     // 尝试从本地缓存加载
     loadFromLocalStorage();
 
     // 初始渲染命令
     renderCommands();
+    loadNodesFromServer();
 });
 
 // 修改导入函数，保存原始缓存
@@ -1437,6 +1814,557 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// ===== 远程节点管理 =====
+
+let nodes = [];
+let activeNodeId = null;
+
+// 从服务器加载节点列表
+async function loadNodesFromServer() {
+    try {
+        const response = await apiFetch('/api/nodes');
+        const data = await response.json();
+        nodes = data.nodes || [];
+        updateNodeSwitcher();
+        renderNodes();
+    } catch (e) {
+        console.error('Failed to load nodes from server:', e);
+        // 回退到本地存储
+        nodes = JSON.parse(localStorage.getItem('openclaw-nodes') || '[]');
+        updateNodeSwitcher();
+        renderNodes();
+    }
+}
+
+// 更新顶部节点切换下拉框
+function updateNodeSwitcher() {
+    const select = document.getElementById('nodeSwitcher');
+    if (!select) return;
+    
+    let html = '<option value="local">🖥️ 本地服务器</option>';
+    nodes.forEach(node => {
+        const selected = activeNodeId === node.id ? 'selected' : '';
+        html += `<option value="${node.id}" ${selected}>${node.name}</option>`;
+    });
+    
+    select.innerHTML = html;
+}
+
+// 切换到指定节点（local 或节点 ID）
+async function switchToNode(nodeId) {
+    const statusDot = document.getElementById('currentNodeStatus');
+    
+    if (nodeId === 'local') {
+        // 切换到本地配置
+        activeNodeId = null;
+        if (statusDot) statusDot.textContent = '🟢';
+        
+        try {
+            const response = await apiFetch('/api/config');
+            const data = await response.json();
+            if (data.exists && data.config) {
+                config = data.config;
+                cachedConfig = JSON.parse(JSON.stringify(config));
+                isModified = false;
+                renderAll();
+                updateCacheStatus();
+                updateRawJsonDisplay();
+                showToast('已切换到本地配置');
+            }
+        } catch (e) {
+            showToast('切换失败: ' + e.message, 'error');
+        }
+    } else {
+        // 切换到远程节点
+        const node = nodes.find(n => n.id === nodeId);
+        if (!node) {
+            showToast('节点不存在', 'error');
+            return;
+        }
+        
+        activeNodeId = nodeId;
+        
+        // 尝试连接并加载配置
+        if (statusDot) statusDot.textContent = '🟡';
+        
+        try {
+            const data = await nodeFetch(node, '/config');
+            if (data.ok) {
+                config = data.config;
+                cachedConfig = JSON.parse(JSON.stringify(config));
+                isModified = false;
+                renderAll();
+                updateCacheStatus();
+                updateRawJsonDisplay();
+                if (statusDot) statusDot.textContent = '🟢';
+                showToast(`已切换到 ${node.name}`);
+            } else {
+                if (statusDot) statusDot.textContent = '🔴';
+                showToast(`连接 ${node.name} 失败: ${data.error || '未知错误'}`, 'error');
+            }
+        } catch (e) {
+            if (statusDot) statusDot.textContent = '🔴';
+            showToast('连接失败: ' + e.message, 'error');
+        }
+    }
+}
+
+window.switchToNode = switchToNode;
+
+function saveNodes() {
+    // 兼容性：仍保留本地存储
+    localStorage.setItem('openclaw-nodes', JSON.stringify(nodes));
+}
+
+function getNode(id) {
+    return nodes.find(n => n.id === id);
+}
+
+function nodeApiUrl(node, path) {
+    // 优先使用服务端代理（解决 CORS 问题）
+    // 如果设置了 useProxy=true 或者当前页面是 HTTPS 但节点是 HTTP，则使用代理
+    const isHttpsPage = window.location.protocol === 'https:';
+    const nodeIsHttp = !node.ssl;
+    
+    if (node.useProxy || (isHttpsPage && nodeIsHttp)) {
+        // 使用服务端代理
+        return `${window.location.origin}/api/proxy/${node.id}${path}`;
+    }
+    
+    // 直接访问（本地网络或同协议）
+    const proto = node.ssl ? 'https' : 'http';
+    return `${proto}://${node.host}:${node.port}${path}`;
+}
+
+async function nodeFetch(node, path, opts = {}) {
+    const url = nodeApiUrl(node, path);
+    const headers = { 'X-Agent-Token': node.token, 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    
+    // 设置超时（默认 30 秒）
+    const timeout = opts.timeout || 30000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+        const res = await fetch(url, { 
+            ...opts, 
+            headers,
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        // 检查 HTTP 状态
+        if (!res.ok) {
+            // 尝试解析错误信息
+            let errorMsg = `HTTP ${res.status}`;
+            try {
+                const errorData = await res.json();
+                errorMsg = errorData.error || errorData.message || errorMsg;
+            } catch (e) {
+                // 无法解析 JSON，使用状态文本
+                errorMsg = res.statusText || errorMsg;
+            }
+            return { ok: false, error: errorMsg };
+        }
+        
+        // 解析 JSON 响应
+        const data = await res.json();
+        return data;
+    } catch (e) {
+        clearTimeout(timeoutId);
+        
+        // 处理不同类型的错误
+        if (e.name === 'AbortError') {
+            return { ok: false, error: '请求超时 (' + (timeout / 1000) + '秒)' };
+        }
+        if (e.message && e.message.includes('Failed to fetch')) {
+            return { ok: false, error: '无法连接到节点 (网络错误或 CORS 被阻止)' };
+        }
+        if (e.message && e.message.includes('NetworkError')) {
+            return { ok: false, error: '网络错误: 无法连接到节点' };
+        }
+        return { ok: false, error: '请求失败: ' + e.message };
+    }
+}
+
+function renderNodes() {
+    const container = document.getElementById('nodesList');
+    if (!container) return;
+
+    if (nodes.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">🖥️</div>
+                <div class="empty-state-text">暂无远程节点</div>
+                <button class="btn btn-primary" onclick="openNodeModal()">+ 添加节点</button>
+            </div>`;
+        return;
+    }
+
+    // 获取所有任务
+    fetchTasks().then(tasks => {
+        container.innerHTML = nodes.map(node => {
+            const taskStatus = getNodeTaskStatus(node.id, tasks);
+            const statusBadge = taskStatus 
+                ? (taskStatus.status === 'completed' ? '✅' : taskStatus.status === 'running' ? '🔄' : '⏳')
+                : '—';
+            const statusText = taskStatus
+                ? `${taskStatus.status} (${new Date(taskStatus.createdAt).toLocaleTimeString()})`
+                : '无任务';
+            
+            return `
+        <div class="node-card" id="node-card-${node.id}">
+            <div class="node-header">
+                <div class="node-info">
+                    <span class="node-status-dot" id="dot-${node.id}">⚪</span>
+                    <div>
+                        <div class="node-name">${escapeHtml(node.name)}</div>
+                        <div class="node-addr">${escapeHtml(node.host)}:${node.port}</div>
+                    </div>
+                </div>
+                <div class="node-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="pingNode('${node.id}')">连接</button>
+                    <button class="btn btn-primary btn-sm" onclick="loadNodeConfig('${node.id}')">读取配置</button>
+                    <button class="btn btn-success btn-sm" onclick="pushNodeConfig('${node.id}')">写入配置</button>
+                    <button class="btn btn-secondary btn-sm" onclick="openNodeRescue('${node.id}')">救援</button>
+                    <button class="btn btn-secondary btn-sm" onclick="openNodeModal('${node.id}')">编辑</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteNode('${node.id}')">删除</button>
+                </div>
+            </div>
+            <div class="node-task-bar">
+                <span class="task-status">${statusBadge} 任务状态: ${statusText}</span>
+                <button class="btn btn-sm" onclick="quickTask('${node.id}', 'status')">📊 状态</button>
+                <button class="btn btn-sm" onclick="quickTask('${node.id}', 'doctor-fix')">🔧 修复</button>
+                <button class="btn btn-sm" onclick="quickTask('${node.id}', 'restart-gateway')">↺ 重启</button>
+            </div>
+            <div class="node-cmd-bar" id="node-cmd-${node.id}" style="display:none">
+                <button class="btn btn-sm" onclick="runNodeCmd('${node.id}','start')">▶ 启动</button>
+                <button class="btn btn-sm" onclick="runNodeCmd('${node.id}','stop')">■ 停止</button>
+                <button class="btn btn-sm" onclick="runNodeCmd('${node.id}','restart')">↺ 重启</button>
+                <button class="btn btn-sm" onclick="runNodeCmd('${node.id}','status')">? 状态</button>
+            </div>
+            <div class="node-output" id="node-out-${node.id}" style="display:none"></div>
+        </div>
+    `}).join('');
+    });
+}
+
+// 快速创建任务
+async function quickTask(nodeId, command) {
+    const node = getNode(nodeId);
+    if (!node) return;
+    const data = await createTask(nodeId, command);
+    if (data.success) {
+        showToast(`✅ 任务已创建: ${command}`);
+        setTimeout(renderNodes, 1000); // 刷新显示
+    } else {
+        showToast(`❌ 创建失败: ${data.error}`);
+    }
+}
+
+async function pingNode(id) {
+    const node = getNode(id);
+    if (!node) return;
+    const dot = document.getElementById('dot-' + id);
+    if (dot) dot.textContent = '🟡';
+    try {
+        const data = await nodeFetch(node, '/health');
+        if (data.ok) {
+            if (dot) dot.textContent = '🟢';
+            const bar = document.getElementById('node-cmd-' + id);
+            if (bar) bar.style.display = 'flex';
+            showNodeOutput(id, `✅ 已连接 — ${data.hostname || ''} (${data.platform || ''})`);
+            showToast(`节点 "${node.name}" 连接成功`);
+        } else {
+            if (dot) dot.textContent = '🔴';
+            showNodeOutput(id, '❌ 连接失败: ' + JSON.stringify(data));
+        }
+    } catch (e) {
+        if (dot) dot.textContent = '🔴';
+        showNodeOutput(id, '❌ 无法连接: ' + e.message);
+        showToast(`节点 "${node.name}" 连接失败`, 'error');
+    }
+}
+
+async function loadNodeConfig(id) {
+    const node = getNode(id);
+    if (!node) return;
+    showNodeOutput(id, '⏳ 正在读取配置...');
+    try {
+        const data = await nodeFetch(node, '/config');
+        if (data.ok) {
+            config = data.config;
+            cachedConfig = JSON.parse(JSON.stringify(config));
+            isModified = false;
+            renderAll();
+            updateCacheStatus();
+            updateRawJsonDisplay();
+            activeNodeId = id;
+            showNodeOutput(id, '✅ 配置已加载到编辑器');
+            showToast(`已从 "${node.name}" 加载配置`);
+        } else if (data.raw) {
+            showNodeOutput(id, '⚠️ 配置解析失败，原始内容:\n' + data.raw.slice(0, 500));
+            showToast('配置文件格式错误', 'error');
+        } else {
+            showNodeOutput(id, '❌ ' + (data.error || '未知错误'));
+            showToast('读取配置失败', 'error');
+        }
+    } catch (e) {
+        showNodeOutput(id, '❌ 请求失败: ' + e.message);
+        showToast('读取配置失败', 'error');
+    }
+}
+
+async function pushNodeConfig(id) {
+    const node = getNode(id);
+    if (!node) return;
+    if (!confirm(`确定要将当前配置写入节点 "${node.name}" 吗？\n原配置将自动备份。`)) return;
+    saveAllSettings();
+    showNodeOutput(id, '⏳ 正在写入配置...');
+    try {
+        const data = await nodeFetch(node, '/config', {
+            method: 'POST',
+            body: JSON.stringify({ config })
+        });
+        if (data.ok) {
+            showNodeOutput(id, `✅ 配置已写入${data.backedUpTo ? '\n备份: ' + data.backedUpTo : ''}`);
+            showToast(`配置已写入 "${node.name}"`);
+        } else {
+            showNodeOutput(id, '❌ 写入失败: ' + (data.error || ''));
+            showToast('写入配置失败', 'error');
+        }
+    } catch (e) {
+        showNodeOutput(id, '❌ 请求失败: ' + e.message);
+        showToast('写入配置失败', 'error');
+    }
+}
+
+async function runNodeCmd(id, cmd) {
+    const node = getNode(id);
+    if (!node) return;
+    showNodeOutput(id, `⏳ 执行: openclaw gateway ${cmd}...`);
+    try {
+        const data = await nodeFetch(node, '/command', {
+            method: 'POST',
+            body: JSON.stringify({ command: cmd })
+        });
+        const out = [data.stdout, data.stderr].filter(Boolean).join('\n') || '(无输出)';
+        showNodeOutput(id, `$ openclaw gateway ${cmd}\n${out}\n退出码: ${data.exitCode}`);
+    } catch (e) {
+        showNodeOutput(id, '❌ 请求失败: ' + e.message);
+    }
+}
+
+function showNodeOutput(id, text) {
+    const el = document.getElementById('node-out-' + id);
+    if (!el) return;
+    el.style.display = 'block';
+    el.textContent = text;
+}
+
+// ── Node Modal ────────────────────────────────────────────────────────────────
+
+function openNodeModal(id = null) {
+    const modal = document.getElementById('nodeModal');
+    if (!modal) return;
+    const node = id ? getNode(id) : null;
+    document.getElementById('nodeModalTitle').textContent = node ? '编辑节点' : '添加节点';
+    document.getElementById('nodeModalId').value = id || '';
+    document.getElementById('nodeName').value = node ? node.name : '';
+    document.getElementById('nodeHost').value = node ? node.host : '';
+    document.getElementById('nodePort').value = node ? node.port : 18790;
+    document.getElementById('nodeToken').value = node ? node.token : '';
+    document.getElementById('nodeSsl').checked = node ? !!node.ssl : false;
+    modal.classList.remove('hidden');
+}
+
+function closeNodeModal() {
+    const modal = document.getElementById('nodeModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function saveNode() {
+    const id = document.getElementById('nodeModalId').value;
+    const name = document.getElementById('nodeName').value.trim();
+    const host = document.getElementById('nodeHost').value.trim();
+    const port = parseInt(document.getElementById('nodePort').value) || 18790;
+    const token = document.getElementById('nodeToken').value.trim();
+    const ssl = document.getElementById('nodeSsl').checked;
+
+    if (!name || !host || !token) {
+        showToast('请填写节点名称、主机地址和 Token', 'error');
+        return;
+    }
+
+    // 优先保存到服务器
+    apiFetch('/api/nodes/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, host, port, token, ssl })
+    }).then(res => res.json()).then(data => {
+        if (data.success && data.node) {
+            const idx = nodes.findIndex(n => n.id === data.node.id);
+            if (idx >= 0) {
+                nodes[idx] = data.node;
+            } else {
+                nodes.push(data.node);
+            }
+            saveNodes();
+            closeNodeModal();
+            renderNodes();
+            showToast(id ? '节点已更新' : '节点已添加');
+        } else {
+            showToast('保存节点失败: ' + (data.message || '未知错误'), 'error');
+        }
+    }).catch(err => {
+        showToast('保存节点失败: ' + err.message, 'error');
+    });
+}
+
+function deleteNode(id) {
+    const node = getNode(id);
+    if (!node || !confirm(`确定要删除节点 "${node.name}" 吗？`)) return;
+
+    fetch(`/api/nodes/${id}`, { method: 'DELETE' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                nodes = nodes.filter(n => n.id !== id);
+                saveNodes();
+                renderNodes();
+                showToast('节点已删除');
+            } else {
+                showToast('删除失败: ' + (data.message || '未知错误'), 'error');
+            }
+        }).catch(err => {
+            showToast('删除失败: ' + err.message, 'error');
+        });
+}
+
+// ── Rescue Modal ──────────────────────────────────────────────────────────────
+
+function openNodeRescue(id) {
+    const modal = document.getElementById('rescueModal');
+    if (!modal) return;
+    document.getElementById('rescueNodeId').value = id;
+    const node = getNode(id);
+    document.getElementById('rescueNodeName').textContent = node ? node.name : id;
+    document.getElementById('rescueOutput').textContent = '';
+    modal.classList.remove('hidden');
+}
+
+function closeRescueModal() {
+    const modal = document.getElementById('rescueModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// ── 任务队列 API ────────────────────────────────────────────────────────────
+
+// 创建任务（通过任务队列而不是直接连接）
+async function createTask(nodeId, command) {
+    try {
+        const res = await apiFetch('/api/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nodeId, command })
+        });
+        const data = await res.json();
+        return data;
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
+// 获取所有任务
+async function fetchTasks() {
+    try {
+        const res = await apiFetch('/api/tasks');
+        const data = await res.json();
+        return data.tasks || [];
+    } catch (e) {
+        return [];
+    }
+}
+
+// 获取节点的任务状态
+function getNodeTaskStatus(nodeId, tasks) {
+    const nodeTasks = tasks.filter(t => t.nodeId === nodeId);
+    if (nodeTasks.length === 0) return null;
+    // 返回最新任务
+    return nodeTasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+}
+
+// ── 救援操作（使用任务队列）────────────────────────────────────────────────
+
+async function runRescue(mode) {
+    const id = document.getElementById('rescueNodeId').value;
+    const node = getNode(id);
+    if (!node) return;
+    const outEl = document.getElementById('rescueOutput');
+    outEl.textContent = `⏳ 创建任务: ${mode}...\n(远程 Agent 将通过轮询获取并执行任务)`;
+    
+    try {
+        // 使用任务队列而不是直接连接
+        const data = await createTask(node.id, mode);
+        if (data.success) {
+            outEl.textContent = `✅ 任务已创建: ${data.task?.id}\n状态: pending\n等待 Agent 轮询执行...`;
+            // 刷新任务列表
+            setTimeout(() => refreshTaskStatus(node.id), 2000);
+        } else {
+            outEl.textContent = `❌ 创建任务失败: ${data.error}`;
+        }
+    } catch (e) {
+        outEl.textContent = '❌ 请求失败: ' + e.message;
+    }
+}
+
+// 刷新任务状态显示
+async function refreshTaskStatus(nodeId) {
+    const tasks = await fetchTasks();
+    const status = getNodeTaskStatus(nodeId, tasks);
+    const outEl = document.getElementById('rescueOutput');
+    if (status && outEl) {
+        const statusEmoji = status.status === 'completed' ? '✅' : status.status === 'running' ? '🔄' : '⏳';
+        outEl.textContent += `\n\n${statusEmoji} 任务状态: ${status.status}`;
+        if (status.result) {
+            outEl.textContent += `\n结果: ${status.result.output || status.result.error || '无输出'}`;
+        }
+    }
+}
+
+// ── Install Script ────────────────────────────────────────────────────────────
+
+function showInstallScript() {
+    const modal = document.getElementById('installModal');
+    if (!modal) return;
+    updateInstallScript();
+    modal.classList.remove('hidden');
+}
+
+function closeInstallModal() {
+    const modal = document.getElementById('installModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function updateInstallScript() {
+    const port = document.getElementById('installPort')?.value || 18790;
+    const token = document.getElementById('installToken')?.value || generateToken(32);
+    const agentUrl = document.getElementById('installAgentUrl')?.value || '';
+    const nodeName = document.getElementById('installNodeName')?.value || '';
+    const out = document.getElementById('installScriptOut');
+    if (!out) return;
+    const envPart = agentUrl ? `AGENT_SCRIPT_URL="${agentUrl}" ` : '';
+    const managerUrl = window.location.origin;
+    const namePart = nodeName ? ` --name "${nodeName}"` : '';
+    out.textContent = `${envPart}bash <(curl -fsSL ${window.location.origin}/install.sh) --token "${token}" --port ${port} --manager-url "${managerUrl}"${namePart}`;
+}
+
+function copyInstallScript() {
+    const out = document.getElementById('installScriptOut');
+    if (!out) return;
+    navigator.clipboard.writeText(out.textContent).then(() => showToast('安装命令已复制'));
+}
+
 // 修改 switchSection，加入命令渲染
 const originalSwitchSection = switchSection;
 window.switchSection = function (sectionId) {
@@ -1453,9 +2381,12 @@ window.switchSection = function (sectionId) {
     // Refresh section content
     if (sectionId === 'raw') {
         updateRawJsonDisplay();
+        renderBackupsList();
     } else if (sectionId === 'agent') {
         renderAgentSettings();
     } else if (sectionId === 'commands') {
         renderCommands();
+    } else if (sectionId === 'nodes') {
+        renderNodes();
     }
 };

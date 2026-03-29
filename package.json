@@ -1,0 +1,11 @@
+{
+  "name": "openclaw-config-gui",
+  "version": "1.0.0",
+  "description": "OpenClaw Configuration GUI with Remote Node Management",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "agent": "node openclaw-agent/agent.js"
+  },
+  "engines": { "node": ">=18" }
+}

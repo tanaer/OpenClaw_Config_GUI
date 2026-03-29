@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OpenClaw 配置管理器 🦞</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="/config/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
@@ -15,13 +15,26 @@
         <header class="header">
             <div class="header-left">
                 <h1 class="logo">🦞 OpenClaw Config</h1>
+                <div class="node-switcher">
+                    <label>当前节点：</label>
+                    <select id="nodeSwitcher" class="select select-sm" onchange="switchToNode(this.value)">
+                        <option value="local">🖥️ 本地服务器</option>
+                    </select>
+                    <span class="node-status-dot" id="currentNodeStatus" title="节点状态">🟢</span>
+                </div>
             </div>
             <div class="header-right">
                 <button class="theme-toggle" id="themeToggle" title="切换主题">
                     🌙
                 </button>
+                <button class="btn btn-secondary" id="validateBtn" title="验证当前配置格式">
+                    <span class="icon">✓</span> 验证
+                </button>
                 <button class="btn btn-secondary" id="importBtn">
                     <span class="icon">📥</span> 导入配置
+                </button>
+                <button class="btn btn-success" id="saveToServerBtn">
+                    <span class="icon">💾</span> 保存到服务器
                 </button>
                 <button class="btn btn-primary" id="exportBtn">
                     <span class="icon">📤</span> 导出配置
@@ -58,6 +71,10 @@
                         <span class="nav-icon">💻</span>
                         <span class="nav-text">常用命令</span>
                     </li>
+                    <li class="nav-item" data-section="nodes">
+                        <span class="nav-icon">🖥️</span>
+                        <span class="nav-text">远程节点</span>
+                    </li>
                 </ul>
             </nav>
 
@@ -67,9 +84,23 @@
                 <section class="section" id="section-providers">
                     <div class="section-header">
                         <h2>模型提供商</h2>
-                        <button class="btn btn-primary btn-sm" id="addProviderBtn">
-                            <span class="icon">+</span> 添加提供商
-                        </button>
+                        <div class="section-actions">
+                            <button class="btn btn-secondary btn-sm" id="copySelectedBtn" title="复制选中的提供商/模型">
+                                <span class="icon">📋</span> 复制选中
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="copyAllBtn" title="复制全部模型配置">
+                                <span class="icon">📚</span> 复制全部
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="pasteOverwriteBtn" title="粘贴并覆盖同名提供商/模型">
+                                <span class="icon">📥</span> 粘贴覆盖
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="clearSelectionBtn" title="清空选中项">
+                                <span class="icon">🧹</span> 清空选择
+                            </button>
+                            <button class="btn btn-primary btn-sm" id="addProviderBtn">
+                                <span class="icon">+</span> 添加提供商
+                            </button>
+                        </div>
                     </div>
                     <div class="providers-list" id="providersList">
                         <!-- Providers will be rendered here -->
@@ -184,6 +215,19 @@
                     <div class="card">
                         <textarea id="rawJson" class="code-editor" spellcheck="false"></textarea>
                     </div>
+                    
+                    <!-- 备份管理 -->
+                    <div class="section-header" style="margin-top: 24px;">
+                        <h3>📋 备份管理</h3>
+                        <button class="btn btn-secondary btn-sm" id="refreshBackupsBtn">
+                            <span class="icon">🔄</span> 刷新
+                        </button>
+                    </div>
+                    <div id="backupsList" class="backups-list">
+                        <div class="empty-state">
+                            <div class="empty-state-text">点击刷新加载备份列表</div>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- Commands Section -->
@@ -243,6 +287,25 @@
                             </div>
                         </div>
                     </div>
+                </section>
+                <!-- Nodes Section -->
+                <section class="section hidden" id="section-nodes">
+                    <div class="section-header">
+                        <h2>远程节点管理</h2>
+                        <div class="section-actions">
+                            <button class="btn btn-secondary btn-sm" onclick="showInstallScript()">
+                                <span class="icon">📦</span> 客户端安装脚本
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="openNodeModal()">
+                                <span class="icon">+</span> 添加节点
+                            </button>
+                        </div>
+                    </div>
+                    <div class="node-tip">
+                        <span>💡</span>
+                        <span>在远程机器上运行安装脚本后，即可在此处添加节点进行远程管理。支持读取/写入配置、执行网关命令和多种救援模式。</span>
+                    </div>
+                    <div id="nodesList"></div>
                 </section>
             </main>
         </div>
@@ -309,6 +372,13 @@
                     <input type="number" id="modelMaxTokens" class="input" value="32000">
                 </div>
                 <div class="form-group">
+                    <label>API 模式</label>
+                    <select id="modelApiMode" class="select">
+                        <option value="openai-completions">OpenAI Completions</option>
+                        <option value="anthropic-messages">Anthropic Messages</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="modelReasoning" checked>
                         <span>支持推理 (Reasoning)</span>
@@ -370,16 +440,206 @@
         </div>
     </div>
 
+    <!-- Modal: Node -->
+    <div class="modal-overlay hidden" id="nodeModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="nodeModalTitle">添加节点</h3>
+                <button class="btn-close" onclick="closeNodeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="nodeModalId">
+                <div class="form-group">
+                    <label>节点名称 *</label>
+                    <input type="text" id="nodeName" class="input" placeholder="例如: 生产服务器">
+                </div>
+                <div class="form-group">
+                    <label>主机地址 *</label>
+                    <input type="text" id="nodeHost" class="input" placeholder="192.168.1.100 或 example.com">
+                </div>
+                <div class="form-group">
+                    <label>端口</label>
+                    <input type="number" id="nodePort" class="input" value="18790">
+                </div>
+                <div class="form-group">
+                    <label>Agent Token *</label>
+                    <input type="text" id="nodeToken" class="input" placeholder="安装时设置的 Token">
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="nodeSsl">
+                        <span>使用 HTTPS</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeNodeModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveNode()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Rescue -->
+    <div class="modal-overlay hidden" id="rescueModal">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3>🚑 救援模式 — <span id="rescueNodeName"></span></h3>
+                <button class="btn-close" onclick="closeRescueModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="rescueNodeId">
+                <p class="rescue-desc">选择救援操作，所有操作均在远程节点执行：</p>
+                <div class="rescue-grid">
+                    <button class="rescue-btn" onclick="runRescue('status')">
+                        <span class="rescue-icon">📊</span>
+                        <span class="rescue-label">查看状态</span>
+                        <span class="rescue-hint">获取网关当前运行状态</span>
+                    </button>
+                    <button class="rescue-btn" onclick="runRescue('doctor-fix')">
+                        <span class="rescue-icon">🔧</span>
+                        <span class="rescue-label">Doctor 修复</span>
+                        <span class="rescue-hint">openclaw doctor --fix --non-interactive</span>
+                    </button>
+                    <button class="rescue-btn" onclick="runRescue('doctor-deep')">
+                        <span class="rescue-icon">🩺</span>
+                        <span class="rescue-label">深度诊断</span>
+                        <span class="rescue-hint">openclaw doctor --deep --non-interactive</span>
+                    </button>
+                    <button class="rescue-btn" onclick="runRescue('kill-gateway')">
+                        <span class="rescue-icon">🔪</span>
+                        <span class="rescue-label">强制终止网关</span>
+                        <span class="rescue-hint">pkill openclaw gateway 进程</span>
+                    </button>
+                    <button class="rescue-btn" onclick="runRescue('restore-backup')">
+                        <span class="rescue-icon">↩️</span>
+                        <span class="rescue-label">恢复最近备份</span>
+                        <span class="rescue-hint">从最新 .bak 文件恢复配置</span>
+                    </button>
+                    <button class="rescue-btn" onclick="runRescue('reset-config')">
+                        <span class="rescue-icon">🔄</span>
+                        <span class="rescue-label">重置为最小配置</span>
+                        <span class="rescue-hint">清空配置，保留备份</span>
+                    </button>
+                    <button class="rescue-btn" onclick="runRescue('clear-locks')">
+                        <span class="rescue-icon">🔓</span>
+                        <span class="rescue-label">清除锁文件</span>
+                        <span class="rescue-hint">删除 .lock / .swp 文件</span>
+                    </button>
+                    <button class="rescue-btn rescue-danger" onclick="if(confirm('此操作将删除配置文件并停止网关，确定吗？'))runRescue('factory-reset')">
+                        <span class="rescue-icon">💣</span>
+                        <span class="rescue-label">出厂重置</span>
+                        <span class="rescue-hint">停止网关并删除配置文件</span>
+                    </button>
+                </div>
+                <pre class="rescue-output" id="rescueOutput"></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeRescueModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Install Script -->
+    <div class="modal-overlay hidden" id="installModal">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3>📦 客户端安装脚本</h3>
+                <button class="btn-close" onclick="closeInstallModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="rescue-desc">在目标机器上运行以下命令，即可安装 OpenClaw 远程 Agent：</p>
+                <div class="form-group">
+                    <label>Agent 端口</label>
+                    <input type="number" id="installPort" class="input" value="18790" oninput="updateInstallScript()">
+                </div>
+                <div class="form-group">
+                    <label>Agent Token（授权密钥）</label>
+                    <input type="text" id="installToken" class="input" placeholder="留空自动生成" oninput="updateInstallScript()">
+                </div>
+                <div class="form-group">
+                    <label>节点名称（可选）</label>
+                    <input type="text" id="installNodeName" class="input" placeholder="例如: hk-server-01" oninput="updateInstallScript()">
+                </div>
+                <div class="form-group">
+                    <label>agent.js 下载地址（可选）</label>
+                    <input type="text" id="installAgentUrl" class="input" placeholder="http://your-server/openclaw-agent/agent.js" oninput="updateInstallScript()">
+                </div>
+                <div class="form-group">
+                    <label>安装命令</label>
+                    <pre class="install-script-out" id="installScriptOut"></pre>
+                </div>
+                <p class="rescue-desc">安装完成后，将节点主机地址、端口和 Token 填入「添加节点」即可开始管理。</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeInstallModal()">关闭</button>
+                <button class="btn btn-primary" onclick="copyInstallScript()">📋 复制命令</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast hidden" id="toast">
         <span class="toast-icon"></span>
         <span class="toast-message"></span>
     </div>
 
+    <!-- QR Code Float Button -->
+    <div class="qr-float-btn" id="qrFloatBtn" title="扫码访问">
+        <span>📱</span>
+    </div>
+
+    <!-- QR Code Modal -->
+    <div class="modal-overlay hidden" id="qrModal">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h3>📱 扫码访问</h3>
+                <button class="btn-close" onclick="closeQrModal()">&times;</button>
+            </div>
+            <div class="modal-body qr-modal-body">
+                <div class="qr-container">
+                    <img id="qrCodeImg" src="" alt="QR Code">
+                </div>
+                <p class="qr-url" id="qrUrlText"></p>
+                <p class="qr-hint">用手机摄像头扫描二维码，即可快速访问配置管理器</p>
+            </div>
+        </div>
+    </div>
+
     <!-- Hidden file input -->
     <input type="file" id="fileInput" accept=".json" style="display: none;">
 
-    <script src="app.js"></script>
+    <script src="/config/app.js"></script>
+    <script>
+        // QR Code functionality
+        (function() {
+            const qrBtn = document.getElementById('qrFloatBtn');
+            const qrModal = document.getElementById('qrModal');
+            const qrImg = document.getElementById('qrCodeImg');
+            const qrUrlText = document.getElementById('qrUrlText');
+            
+            // Get current URL (without hash/query)
+            const baseUrl = window.location.origin + window.location.pathname;
+            const displayUrl = window.location.origin;
+            
+            // Generate QR code using public API
+            const qrApiUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(displayUrl);
+            
+            qrBtn.addEventListener('click', function() {
+                qrImg.src = qrApiUrl;
+                qrUrlText.textContent = displayUrl;
+                qrModal.classList.remove('hidden');
+            });
+        })();
+        
+        function closeQrModal() {
+            document.getElementById('qrModal').classList.add('hidden');
+        }
+        
+        // Close QR modal on overlay click
+        document.getElementById('qrModal').addEventListener('click', function(e) {
+            if (e.target === this) closeQrModal();
+        });
+    </script>
 </body>
 
 </html>

@@ -132,6 +132,29 @@ body {
     gap: 12px;
 }
 
+.node-switcher {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 16px;
+    padding-left: 16px;
+    border-left: 1px solid var(--border-color);
+}
+
+.node-switcher label {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.select-sm {
+    padding: 6px 10px;
+    font-size: 13px;
+}
+
+.node-status-dot {
+    font-size: 12px;
+}
+
 /* ===== Buttons ===== */
 .btn {
     display: inline-flex;
@@ -1007,3 +1030,324 @@ body {
         max-height: calc(100vh - 32px);
     }
 }
+
+/* ===== Nodes Section ===== */
+.node-tip {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: var(--border-radius-sm);
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.node-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: border-color var(--transition-fast);
+}
+.node-card:hover { border-color: rgba(255,255,255,0.2); }
+
+.node-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.node-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.node-status-dot { font-size: 14px; }
+
+.node-name {
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text-primary);
+}
+
+.node-addr {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: monospace;
+}
+
+.node-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.node-cmd-bar {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+    flex-wrap: wrap;
+}
+
+.node-output {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--bg-primary);
+    border-radius: var(--border-radius-sm);
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+/* ===== Rescue Modal ===== */
+.modal-wide { max-width: 640px; }
+
+.rescue-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 14px;
+}
+
+.rescue-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.rescue-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 12px 14px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: left;
+    color: var(--text-primary);
+}
+.rescue-btn:hover {
+    border-color: var(--accent-blue);
+    background: rgba(59,130,246,0.08);
+}
+.rescue-btn.rescue-danger:hover {
+    border-color: var(--accent-red);
+    background: rgba(239,68,68,0.08);
+}
+
+.rescue-icon { font-size: 20px; }
+.rescue-label { font-size: 13px; font-weight: 600; }
+.rescue-hint { font-size: 11px; color: var(--text-muted); }
+
+.rescue-output {
+    background: var(--bg-primary);
+    border-radius: var(--border-radius-sm);
+    padding: 10px 12px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    min-height: 40px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* ===== Install Script Modal ===== */
+.install-script-out {
+    background: var(--bg-primary);
+    border-radius: var(--border-radius-sm);
+    padding: 12px 14px;
+    font-family: monospace;
+    font-size: 12px;
+    color: #22c55e;
+    white-space: pre-wrap;
+    word-break: break-all;
+    min-height: 48px;
+    border: 1px solid var(--border-color);
+}
+
+/* ===== Btn variants ===== */
+.btn-success {
+    background: var(--accent-green);
+    color: #fff;
+    border: none;
+}
+.btn-success:hover { background: #16a34a; }
+
+.btn-danger {
+    background: var(--accent-red);
+    color: #fff;
+    border: none;
+}
+.btn-danger:hover { background: #dc2626; }
+
+/* ===== Backup list ===== */
+.backups-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+}
+.backup-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+}
+.backup-info {
+    flex: 1;
+    min-width: 0;
+}
+.backup-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+.backup-meta {
+    display: flex;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+.backup-actions {
+    flex-shrink: 0;
+    margin-left: 12px;
+}
+
+/* ===== Checkbox select in provider/model ===== */
+.provider-checkbox, .model-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    flex-shrink: 0;
+    accent-color: var(--accent-purple, #7c3aed);
+}
+.provider-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.model-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.section-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+/* ===== QR Code Float Button ===== */
+.qr-float-btn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    background: linear-gradient(135deg, var(--accent-purple, #7c3aed), var(--accent-blue, #3b82f6));
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
+    transition: all 0.3s ease;
+    z-index: 1000;
+}
+
+.qr-float-btn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 20px rgba(124, 58, 237, 0.5);
+}
+
+.qr-float-btn:active {
+    transform: scale(0.95);
+}
+
+/* ===== QR Code Modal ===== */
+.qr-modal-body {
+    text-align: center;
+    padding: 24px;
+}
+
+.qr-container {
+    background: #fff;
+    padding: 16px;
+    border-radius: 12px;
+    display: inline-block;
+    margin-bottom: 16px;
+}
+
+.qr-container img {
+    width: 200px;
+    height: 200px;
+    display: block;
+}
+
+.qr-url {
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    word-break: break-all;
+}
+
+.qr-hint {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.modal-sm {
+    max-width: 320px;
+}
+
+/* Dark theme QR adjustments */
+[data-theme="dark"] .qr-container {
+    background: #fff;
+}
+
+[data-theme="dark"] .qr-float-btn {
+    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.6);
+}
+.node-task-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border-top: 1px solid #eee;
+    font-size: 13px;
+}
+.task-status {
+    color: #666;
+}
+

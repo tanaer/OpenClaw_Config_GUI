@@ -1,0 +1,5 @@
+OpenClaw Config GUI running at http://0.0.0.0:3000
+Config file: /root/.openclaw/openclaw.json
+Backup dir:  /root/.openclaw/config-backups
+Agent install script: http://0.0.0.0:3000/install.sh
+Agent script:         http://0.0.0.0:3000/openclaw-agent/agent.js
